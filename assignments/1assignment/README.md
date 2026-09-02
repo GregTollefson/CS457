@@ -135,15 +135,16 @@ main()
  |      +-- Parse HTML
  |      +-- Extract schedule
  |      +-- Return finals DataFrame
+ |      +-- Split multi-day fields in DataFrame
  |
  +-- load_courses()
  |      |
- |      +-- Read courses.csv
+ |      +-- Read input file: courses.csv
  |      +-- Return courses DataFrame
  |
  +-- merge_schedules()
         |
-        +-- Match Day and Time
+        +-- Match Day and Time using pd.merge
         +-- Return completed schedule
 ```
 
@@ -154,26 +155,68 @@ if __name__ == "__main__":
     main()
 ```
 
-## Running the Program
+## Setup and Running the Program
 
-Create and activate a Python virtual environment:
+After extracting the submitted ZIP file, open a terminal in the assignment directory containing `makeFinalSchedule.py`.
+
+The directory should contain:
+
+```text
+WorkingDirectory/
+├── makeFinalSchedule.py
+├── courses.csv
+├── requirements.txt
+└── README.md
+```
+
+### 1. Create a Python virtual environment
 
 ```bash
 python3 -m venv .venv
+```
+
+### 2. Activate the virtual environment
+
+Linux, macOS, or WSL:
+
+```bash
 source .venv/bin/activate
 ```
 
-Install the required packages:
+Windows PowerShell:
 
-```bash
-pip install requests beautifulsoup4 pandas
+```powershell
+.venv\Scripts\Activate.ps1
 ```
 
-Run the program:
+### 3. Install the required packages
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+### 4. Run the program
 
 ```bash
 python makeFinalSchedule.py
 ```
+
+The program reads the course schedule from `courses.csv`, retrieves the UNR final exam schedule, and matches each course with its corresponding final exam day and time.
+
+### 5. Deactivate the virtual environment
+
+When finished:
+
+```bash
+deactivate
+```
+
+Output File:  
+```
+final_schedule.csv
+```
+
+Note: The input file `courses.csv` is hardcoded in `makeFinalSchedule.py`
 
 ## Development Workflow
 
@@ -205,20 +248,6 @@ Refactor into standalone Python functions
 
 This separation made it possible to verify each stage of the data pipeline before incorporating it into the final program.
 
-## Key Concepts Demonstrated
-
-This project provides a small example of several data-management concepts:
-
-* HTTP data retrieval
-* HTML parsing
-* Web scraping
-* Semi-structured to structured data transformation
-* Data cleaning and normalization
-* Pandas DataFrames
-* Composite lookup keys
-* Relational joins
-* CSV file I/O
-* Python functions and program entry points
 
 ## Data Source
 
@@ -228,6 +257,3 @@ https://www.unr.edu/admissions/records/academic-calendar/finals-schedule
 
 Because the schedule is retrieved from the live webpage, changes to the page's HTML structure may require corresponding changes to the scraper.
 
-## Disclaimer
-
-This project is intended as an educational exercise. Students should verify final exam dates and times against official University of Nevada, Reno information before relying on the generated schedule.
