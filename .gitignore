@@ -1,6 +1,10 @@
 # Python virtual environments
 .venv/
 
+# Environment Files / secrets
+.env
+.env.*
+
 # Python cache files
 __pycache__/
 *.pyc
@@ -10,3 +14,7 @@ __pycache__/
 
 # Generated program output
 final_schedule.csv
+
+# Files for assignment submisioni
+*.zip
+
