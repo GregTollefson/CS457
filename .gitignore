@@ -18,3 +18,9 @@ final_schedule.csv
 # Files for assignment submisioni
 *.zip
 
+# Directories not yet ready for git, still under development or not used
+projects/FredPOC/
+projects/app/
+
+
+

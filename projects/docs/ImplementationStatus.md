@@ -246,3 +246,47 @@ sql/schema.sql
 ```
 
 and tested against `fred_db`.
+
+## Project Timeline
+
+| Date | Target |
+|---|---|
+| **Now–Oct 11** | **Milestone 2:** Relational schema design, create `schema.sql`, build and test PostgreSQL tables |
+| **Oct 12–18** | **Milestone 3:** FRED ingestion and ETL for one or two series |
+| **Oct 19–25** | Finish Project Design document: architecture, schema, tech stack, infrastructure, and planned UI |
+| **Oct 26** | **Project Design Due** |
+| **Oct 27–Nov 8** | Expand ingestion, add query layer, joins, and date-range queries |
+| **Nov 9–20** | Build Streamlit UI and complete the end-to-end workflow |
+| **Nov 21–26** | Testing, cleanup, README, `requirements.txt`, and database setup/reset scripts |
+| **Nov 27–29** | Final regression testing and submission packaging |
+| **Nov 30** | **Completed Project Due** |
+| **Dec 1–5** | Prepare demo script, screenshots, and presentation talking points |
+| **Dec 6** | Record and edit YouTube demo |
+| **Dec 7** | **Project Demo Due** |
+
+### Target State by Project Design Deadline
+
+By **Oct 26**, the goal is to have a working vertical slice that demonstrates the feasibility of the design:
+
+- PostgreSQL connection working
+- Relational schema defined
+- Tables created successfully
+- At least one FRED series loaded into PostgreSQL
+- One or more SQL queries working against the stored data
+
+### Target State by Project Completion Deadline
+
+By **Nov 30**, the complete application should support the full workflow:
+
+```text
+FRED API
+   ↓
+Python / pandas
+   ↓
+PostgreSQL
+   ↓
+Psycopg query layer
+   ↓
+Streamlit
+   ↓
+User interaction
