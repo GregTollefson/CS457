@@ -1,4 +1,4 @@
-# FRED Database Prototype — Implementation Status - 02/Oct
+# FRED Database Prototype — Implementation Status - 09/Oct
 
 ## Project Root
 
@@ -17,6 +17,8 @@ projects/
 ├── FredPOC/
 ├── app/
 ├── requirements.txt
+├── config/
+├── docs/
 ├── sql/
 ├── src/
 └── tests/
@@ -88,6 +90,7 @@ Implemented configuration loading with `python-dotenv`.
 
 The module:
 
+- Loads the FRED API key.
 - Locates the `.env` file at the project root.
 - Loads the PostgreSQL configuration values.
 - Exposes:
@@ -114,9 +117,119 @@ The function:
 - Opens and returns a Psycopg connection.
 - Leaves connection cleanup to the caller.
 
-No database tables or schema have been created yet.
+At the initial connection milestone, no tables had been created. The existing
+`fred_db` now contains `series` and `observations`, including 574 observations
+for `APU000072610` with two missing values stored as SQL `NULL`. The research
+model migration has **not yet been applied to `fred_db`**.
 
-## Database Integration Test
+### `src/fred_api.py`
+
+Implemented FRED metadata and observation retrieval, pandas DataFrame handling,
+observation date conversion, and missing-value cleaning. FRED is an external
+data source rather than the organizing structure of the research database.
+
+### `src/mapping.py` and `config/series_mapping.json`
+
+Research classifications are maintained in `config/series_mapping.json`.
+`src/mapping.py` loads and validates the mapping, including required fields,
+stable codes, conflicting definitions, and unknown requested series IDs.
+Mapping validation occurs before FRED or database I/O.
+
+Current configured series:
+
+| Series | Category | Metric | Source |
+|---|---|---|---|
+| `APU000072610` | Price (`price`) | Electricity Price (`electricity_price`) | FRED |
+| `CAPG2211S` | Capacity (`capacity`) | Utility Capacity (`utility_capacity`) | FRED |
+
+Stable codes identify research categories and metrics; names are display values.
+FRED metadata such as title, units, frequency, dates, popularity, and notes
+continues to come from FRED rather than the mapping.
+
+### `src/ingest.py`
+
+Ingestion is now mapping/configuration driven. Supported commands, run from the
+project root using the existing virtual environment, include:
+
+```bash
+.venv/bin/python -m src.ingest --series <SERIES_ID> [...]
+.venv/bin/python -m src.ingest --all
+```
+
+For each selected series, ingestion:
+
+1. Reads and validates the mapping and confirms the source is FRED.
+2. Retrieves FRED metadata and checks that its ID matches the requested series.
+3. Retrieves and cleans observations, and prepares metadata dates/timestamps.
+4. Only then opens the PostgreSQL connection/transaction.
+5. Upserts category, metric, source, series, and observations within one transaction.
+
+Successful connection context exit commits; failures roll back database writes.
+Stable identifiers, uniqueness constraints, and `ON CONFLICT` upserts make
+repeated ingestion idempotent. Missing FRED values continue to pass through
+pandas `NaN` and are stored as SQL `NULL`.
+
+### `src/init_db.py`
+
+Installs `sql/schema.sql` for a clean database. Existing databases use the
+incremental migration instead; clean-schema initialization is not a substitute
+for upgrading existing tables.
+
+### `src/validate_db.py`
+
+Provides read-only validation of:
+
+- Required tables
+- Primary keys
+- Foreign keys
+- Uniqueness constraints
+- Orphan references
+- Duplicate research identifiers
+- Preservation of `APU000072610`, its 574 observations, and two SQL `NULL` values
+
+PostgreSQL read-only transaction mode provides an additional safeguard. The
+validator reports PASS/FAIL results and returns a non-zero exit status on failure.
+
+## Research Model and Schema
+
+The implemented research model uses five core tables:
+
+```text
+category
+metric
+source
+series
+observations
+```
+
+Relationships:
+
+```text
+category 1 -> many metric
+metric   1 -> many series
+source   1 -> many series
+series   1 -> many observations
+```
+
+The model organizes electricity-system research variables independently of
+FRED's organizational structure. Category and metric express our interpretation;
+source identifies where each series originates. Natural identifiers have UNIQUE
+constraints alongside surrogate primary keys, and the model remains in 3NF.
+
+Schema and migration work completed:
+
+- `sql/schema.sql` defines the full five-table schema for clean installations.
+- `sql/migrations/001_add_research_model.sql` incrementally upgrades an existing database.
+- The migration creates `category`, `metric`, and `source`.
+- It adds `metric_id` and `source_id` foreign keys to `series`.
+- These columns are intentionally nullable during the migration transition so
+  existing series rows are preserved.
+- Existing series and observation rows are not reset, truncated, or replaced.
+
+The existing production/development `fred_db` has **not yet had this migration
+applied**. Its current two-table data remains the preservation baseline.
+
+## Database Integration Test — Initial Milestone
 
 Created:
 
@@ -171,6 +284,86 @@ PostgreSQL
 fred_db / fred_user
 ```
 
+## Automated Testing
+
+The research-model implementation reached a passing **23-test** suite. The
+subsequent transaction-ordering improvement added one focused test; the current
+automated suite contains **24 tests**.
+
+Coverage includes:
+
+- Mapping validation and malformed/missing mappings
+- Mocked FRED API handling and missing-value cleaning
+- FRED retrieval/cleaning and metadata preparation before database connection
+- Migration preservation and clean schema installation
+- Validator behavior
+- Stable category, metric, and source upserts
+- Idempotent repeated ingestion
+- Transaction rollback on database write failures
+- Shared FRED source behavior across series
+- Metadata/value revisions
+
+Run the full suite from the project root:
+
+```bash
+.venv/bin/python -m unittest discover -s tests
+```
+
+Latest observed result after the ordering improvement:
+
+```text
+Ran 24 tests in 1.263s
+
+OK
+```
+
+No failures, errors, or skips were reported. Database write tests use a
+disposable local PostgreSQL cluster; external FRED HTTP responses are mocked.
+The original connection test performs only a SELECT against the configured
+database.
+
+## Real Vertical-Slice Test
+
+A disposable PostgreSQL database named `fred_slice_test` was used so the
+existing `fred_db` was not modified. The clean five-table schema installed
+successfully, and real FRED ingestion was performed for `CAPG2211S`.
+
+Observed results:
+
+| Item | Result |
+|---|---|
+| Category | `capacity` / Capacity |
+| Metric | `utility_capacity` / Utility Capacity |
+| Source | FRED |
+| Series | `CAPG2211S` |
+| Title | Industrial Capacity: Utilities: Electric Power Generation, Transmission, and Distribution (NAICS = 2211) |
+| Frequency | Monthly |
+| Units | Index 2017=100 |
+| Observations | 716 |
+| Missing/NULL observations | 0 |
+| First observation | 1967-01-01 |
+| Last observation | 2026-08-01 |
+
+The relationship chain was verified in PostgreSQL:
+
+```text
+Capacity -> Utility Capacity -> CAPG2211S -> observations
+CAPG2211S -> FRED
+```
+
+The same ingestion was run a second time. Row counts remained:
+
+| Table | Rows |
+|---|---:|
+| category | 1 |
+| metric | 1 |
+| source | 1 |
+| series | 1 |
+| observations | 716 |
+
+This confirms real end-to-end idempotence. These results belong to the
+disposable vertical-slice database, not the existing `fred_db`.
+
 ## Codex Workflow
 
 Codex CLI is installed in WSL and is being run directly from the project root:
@@ -214,45 +407,62 @@ Completed and tested:
 - [x] Python-to-PostgreSQL integration test implemented
 - [x] Integration test passed
 
-Not yet implemented:
+- [x] Five-table research schema defined
+- [x] Incremental research-model migration written and tested
+- [x] FRED API module and observation cleaning implemented
+- [x] Research series mapping and validation implemented
+- [x] Configuration-driven transactional ingestion implemented
+- [x] External FRED I/O moved before the PostgreSQL transaction
+- [x] Read-only database validator implemented
+- [x] Full automated suite passed (24 tests)
+- [x] Real CAPG2211S vertical-slice ingestion passed in `fred_slice_test`
+- [x] Real end-to-end idempotence verified
 
-- [ ] Relational database schema
-- [ ] SQL table creation script
-- [ ] FRED API module
-- [ ] ETL/data cleaning pipeline
-- [ ] Loading FRED series into PostgreSQL
-- [ ] Application queries
+Not yet completed:
+
+- [ ] Back up and migrate the existing `fred_db`
+- [ ] Validate the migrated `fred_db`
+- [ ] Populate existing APU000072610 metric/source relationships
+- [ ] Add remaining research series
+- [ ] Application query layer
 - [ ] Streamlit user interface
 - [ ] End-to-end FRED → PostgreSQL → Streamlit workflow
 
-## Next Planned Step
+The new architecture has been implemented and tested, and the disposable
+vertical-slice test passed. **The existing `fred_db` has not yet been migrated.**
 
-The next step is to design the relational schema before asking Codex to implement it.
+## Next Planned Steps
 
-The schema design should identify:
+1. Back up `fred_db`.
+2. Apply `sql/migrations/001_add_research_model.sql` to `fred_db` after review.
+3. Run `src/validate_db.py` against the migrated database:
 
-- Relations/tables
-- Attributes
-- Primary keys
-- Foreign keys
-- Relationship cardinalities
-- Constraints
-- Normalization considerations
+   ```bash
+   .venv/bin/python -m src.validate_db
+   ```
 
-Once the schema is agreed upon, it can be implemented in:
+4. Reingest `APU000072610` so its new `metric_id` and `source_id` relationships
+   are populated:
 
-```text
-sql/schema.sql
-```
+   ```bash
+   .venv/bin/python -m src.ingest --series APU000072610
+   ```
 
-and tested against `fred_db`.
+5. Verify preservation of its existing observations and SQL `NULL` values.
+   Reingestion refreshes data from FRED, so compare against the backed-up
+   baseline as well as running the validator.
+6. Continue adding the remaining research series through the mapping configuration.
+
+The validator currently checks the exact 574-observation/two-NULL baseline.
+Any change after a FRED refresh must be investigated rather than silently
+accepted as preservation.
 
 ## Project Timeline
 
 | Date | Target |
 |---|---|
-| **Now–Oct 11** | **Milestone 2:** Relational schema design, create `schema.sql`, build and test PostgreSQL tables |
-| **Oct 12–18** | **Milestone 3:** FRED ingestion and ETL for one or two series |
+| **Now–Oct 11** | **Milestone 2:** Schema and isolated database tests completed; back up and migrate existing `fred_db` |
+| **Oct 12–18** | **Milestone 3:** Real CAPG2211S vertical slice completed; validate live migration and expand research ingestion |
 | **Oct 19–25** | Finish Project Design document: architecture, schema, tech stack, infrastructure, and planned UI |
 | **Oct 26** | **Project Design Due** |
 | **Oct 27–Nov 8** | Expand ingestion, add query layer, joins, and date-range queries |
@@ -290,3 +500,4 @@ Psycopg query layer
 Streamlit
    ↓
 User interaction
+```
