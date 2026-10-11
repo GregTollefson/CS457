@@ -1,0 +1,18 @@
+{
+  "series": {
+    "APU000072610": {
+      "source": "FRED",
+      "category_code": "price",
+      "category_name": "Price",
+      "metric_code": "electricity_price",
+      "metric_name": "Electricity Price"
+    },
+    "CAPG2211S": {
+      "source": "FRED",
+      "category_code": "capacity",
+      "category_name": "Capacity",
+      "metric_code": "utility_capacity",
+      "metric_name": "Utility Capacity"
+    }
+  }
+}

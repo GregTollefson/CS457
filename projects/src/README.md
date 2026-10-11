@@ -156,12 +156,10 @@ Run from the project root with:
 .venv/bin/python -m src.init_db
 ```
 
-The current schema creates the following tables:
-
-```text
-series
-observations
-```
+For a **new database only**, the complete schema creates `category`, `metric`,
+`source`, `series`, and `observations`. `CREATE TABLE IF NOT EXISTS` does not
+upgrade an existing table. Existing databases must use the reviewed incremental
+SQL files in `sql/migrations/`; do not use `init_db` as a migration runner.
 
 ---
 
@@ -169,56 +167,142 @@ observations
 
 Implements the FRED-to-PostgreSQL ingestion pipeline.
 
-For a selected FRED series, the module:
+For a selected configured FRED series, the module:
 
-1. Retrieves series metadata from FRED
-2. Retrieves historical observations
-3. Cleans and converts the observation data
-4. Inserts or updates the metadata in the `series` table
-5. Inserts or updates observations in the `observations` table
-6. Converts missing pandas values to SQL `NULL`
+1. Loads and validates our research mapping.
+2. Upserts category by `category_code`, metric by `metric_code`, and source by
+   `source_name`, obtaining their primary keys.
+3. Retrieves authoritative series metadata and observations from FRED.
+4. Cleans observation dates and values using `fred_api.clean_observations`.
+5. Upserts `series`, retaining its FRED metadata and linking metric and source.
+6. Upserts `observations` on `(series_id, date)`, converting pandas `NaN` to
+   SQL `NULL`.
 
-The current test series is:
-
-```text
-APU000072610
-```
-
-which represents the average price of electricity per kilowatt-hour in the U.S. city average.
-
-Run from the project root with:
+Each series is loaded in one transaction. Any error rolls back its research
+rows, metadata, and observation changes. Repeated ingestion updates existing
+rows rather than duplicating them. The migration must be applied before using
+this enhanced pipeline. Series IDs must be explicitly selected:
 
 ```bash
-.venv/bin/python -m src.ingest
+.venv/bin/python -m src.ingest --series CAPG2211S
+# Or, after reviewing the effects on every configured series:
+.venv/bin/python -m src.ingest --all
 ```
 
-The ingestion uses PostgreSQL `ON CONFLICT` clauses so the process is idempotent.
+### `mapping.py` and `config/series_mapping.json`
 
-Running the ingestion multiple times updates existing rows instead of creating duplicate observations.
+`load_series_mapping()` loads the JSON relative to the project root and returns
+entries keyed by series ID. `get_series_mapping()` rejects unknown IDs before
+external I/O. The loader checks required text fields, stable identifiers, and
+conflicting category/metric definitions.
+
+The initial mapping contains `APU000072610` (Price / Electricity Price, the
+U.S. city average electricity price per kilowatt-hour) and
+`CAPG2211S` (Capacity / Utility Capacity), both from FRED. Adding another FRED
+research variable requires a JSON entry rather than new ingestion code. Do not
+put FRED titles, units, dates, popularity, or notes in this file. Those continue
+to come from FRED. The current adapter supports FRED only; other data sources
+would require their own adapter.
+
+### Research schema and 3NF
+
+- `category`: stable unique `category_code`, unique display `category_name`,
+  optional description, and integer `category_id` primary key.
+- `metric`: stable unique `metric_code`, display name, optional description,
+  and integer primary key; `category_id` references its category.
+- `source`: unique `source_name`, optional description, and integer primary key.
+- `series`: FRED ID primary key and FRED metadata, plus nullable foreign keys
+  `metric_id` and `source_id`.
+- `observations`: `(series_id, date)` composite primary key with value and
+  real-time dates; `series_id` references `series`.
+
+Each table stores attributes of its own key. Category and source attributes
+are not copied into series; category attributes are not copied into metric.
+The natural codes remain unique even though surrogate IDs are used. This
+separates our research taxonomy from FRED's organization and keeps the model
+in 3NF. The existing 574 price observations already exceed the 500-row rubric
+threshold; the new schema supplies five core tables.
+
+Existing series retain NULL metric/source links after migration. To populate
+those links later, explicitly ingest the configured series; doing so also
+refreshes its FRED metadata and observations. No automatic backfill occurs.
+
+### `validate_db.py`
+
+Run `.venv/bin/python -m src.validate_db` after manually applying the migration.
+The validator uses `database.get_connection()`, enables a read-only transaction,
+and executes only SELECT queries. It reports every table, primary key, foreign
+key, uniqueness constraint, orphan/duplicate check, and preservation check.
+It requires exactly 574 `APU000072610` observations and two SQL NULL values,
+and returns exit status 1 on any failure. These are the current preservation
+baseline, not a permanent expected count after future FRED refreshes. Before
+migration, missing research tables/columns are reported as failures without
+changing anything. Relations use the connection's current schema, matching
+normal project initialization and ingestion.
 
 ## Current Data Flow
 
 ```text
-FRED API
-    |
-    v
-fred_api.py
-    |
-    | retrieve and clean
-    v
-ingest.py
-    |
-    | database connection
-    v
-database.py
-    |
-    v
-PostgreSQL
-    |
-    +---- series
-    |
-    +---- observations
+series_mapping.json = our research interpretation
+        |
+        v
+mapping.py --> ingest.py <--> fred_api.py <--> FRED
+                   |
+                   v
+               database.py
+                   |
+                   v
+ category --> metric --> series <-- source
+                            |
+                            v
+                       observations
 ```
+
+`fred_api.py` communicates with FRED; `ingest.py` coordinates transformation
+and loading; `database.py` supplies PostgreSQL connections. `sql/schema.sql`
+is the complete current schema for new installations; `sql/migrations/`
+contains incremental upgrades to existing databases.
+
+## Review and manual upgrade
+
+From the project root, review `git diff` and
+`sql/migrations/001_add_research_model.sql`. The migration creates the three
+research tables and adds nullable foreign keys to `series` inside a transaction.
+It neither replaces nor updates existing series/observations. It is a one-time
+migration: repeating it fails safely rather than silently masking schema drift.
+
+Use a configured `psql` connection (for example a libpq service), without
+embedding passwords in commands or copying `.env` into shell output:
+
+```bash
+git diff
+git diff --no-index -- /dev/null sql/migrations/001_add_research_model.sql
+# Configure the project database in a local libpq service named cs457 first.
+psql 'service=cs457' -X -v ON_ERROR_STOP=1 -f sql/migrations/001_add_research_model.sql
+.venv/bin/python -m src.validate_db
+.venv/bin/python -m src.ingest --series CAPG2211S
+.venv/bin/python -m src.validate_db
+psql 'service=cs457' -X -c '\dt' -c 'SELECT * FROM category;' -c 'SELECT * FROM metric;' -c 'SELECT * FROM source;' -c 'SELECT series_id, metric_id, source_id FROM series;' -c 'SELECT series_id, count(*) AS observations, count(*) FILTER (WHERE value IS NULL) AS missing FROM observations GROUP BY series_id;'
+```
+
+The service is an example, not supplied by this repository. Alternatively,
+apply the migration in your existing PostgreSQL client. The Python validator
+and ingestion commands use the existing `.env` and `.venv`.
+
+## Tests
+
+```bash
+.venv/bin/python -m unittest discover -s tests
+```
+
+The original connection test performs only a SELECT on the configured database.
+Mapping and HTTP tests avoid network calls. The PostgreSQL integration tests
+start a disposable local cluster under a temporary directory, with a Unix
+socket and TCP disabled. They test the clean schema, incremental migration,
+574-row/two-NULL preservation fixture, stable-code upserts, repeated ingestion,
+transaction rollback, SQL NULL storage, and validator outcomes. They never
+use `.env` to select their database. PostgreSQL server binaries (`initdb`,
+`pg_ctl`, `postgres`) are required; those tests are skipped if unavailable.
 
 ## Related Project Files
 
@@ -230,12 +314,18 @@ projects/
 +-- .env
 |   Project credentials and configuration
 |
++-- config/
+|   +-- series_mapping.json
+|       Our research interpretation of external series
+|
 +-- docs/
 |   Database UML and project documentation
 |
 +-- sql/
 |   +-- schema.sql
-|       PostgreSQL schema definition
+|       Complete current PostgreSQL schema
+|   +-- migrations/
+|       Incremental upgrades for existing databases
 |
 +-- src/
     +-- README.md
@@ -244,6 +334,8 @@ projects/
     +-- database.py
     +-- fred_api.py
     +-- ingest.py
+    +-- mapping.py
+    +-- validate_db.py
     +-- init_db.py
 ```
 
@@ -261,7 +353,7 @@ The pipeline currently stores:
 - 574 historical observations
 - Two missing observations stored as PostgreSQL `NULL`
 
-The current database relationship is:
+The original database relationship was:
 
 ```text
 series
@@ -273,4 +365,5 @@ series
 observations
 ```
 
-The schema and ingestion pipeline will be expanded incrementally as additional energy datasets are added.
+The research schema extends this relationship with category, metric, and source.
+The live upgrade and first capacity ingestion are manual steps after review.
