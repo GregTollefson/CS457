@@ -1,3 +1,4 @@
+
 {
   "series": {
     "APU000072610": {
@@ -13,6 +14,41 @@
       "category_name": "Capacity",
       "metric_code": "utility_capacity",
       "metric_name": "Utility Capacity"
+    },
+    "CAPUTLG2211S": {
+      "source": "FRED",
+      "category_code": "utilization",
+      "category_name": "Utilization",
+      "metric_code": "capacity_utilization",
+      "metric_name": "Capacity Utilization"
+    },
+    "TLPWRCONS": {
+      "source": "FRED",
+      "category_code": "investment",
+      "category_name": "Investment",
+      "metric_code": "total_power_construction",
+      "metric_name": "Total Power Construction"
+    },
+    "PRPWRCONS": {
+      "source": "FRED",
+      "category_code": "investment",
+      "category_name": "Investment",
+      "metric_code": "private_power_construction",
+      "metric_name": "Private Power Construction"
+    },
+    "PBPWRCONS": {
+      "source": "FRED",
+      "category_code": "investment",
+      "category_name": "Investment",
+      "metric_code": "public_power_construction",
+      "metric_name": "Public Power Construction"
+    },
+    "IPG22112S": {
+      "source": "FRED",
+      "category_code": "infrastructure_activity",
+      "category_name": "Infrastructure Activity",
+      "metric_code": "transmission_distribution_activity",
+      "metric_name": "Transmission/Distribution Activity"
     }
   }
 }
