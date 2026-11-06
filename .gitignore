@@ -17,10 +17,11 @@ final_schedule.csv
 
 # Files for assignment submisioni
 *.zip
+projects/docs/*.html
 
 # Directories not yet ready for git, still under development or not used
 projects/FredPOC/
 projects/app/
-
+MySQL
 
 
