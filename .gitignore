@@ -21,7 +21,7 @@ projects/docs/*.html
 
 # Directories not yet ready for git, still under development or not used
 projects/FredPOC/
-projects/app/
 MySQL
+projects/backups
 
 
